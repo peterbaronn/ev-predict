@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
 
 # =========================
 # KONFIGURASI PAGE
@@ -22,25 +21,23 @@ BATTERY_FEATURES = [
 
 
 # =========================
-# LOAD MODEL & SCALER
+# SOH FORMULA (TIDAK PAKAI ML)
 # =========================
-@st.cache_resource
-def load_model():
-    try:
-        model = joblib.load("rf_model.pkl")
-        scaler = joblib.load("scaler.pkl")
-        return model, scaler
-    except Exception as e:
-        st.error(f"Gagal load model/scaler: {e}")
-        st.stop()
+def calculate_soh(cycle, min_cycle=0, max_cycle=1200):
+    """Rumus prediksi SoH tanpa ML."""
+    cycle = float(cycle)
+
+    if cycle <= min_cycle:
+        return 100.0
+
+    if cycle >= max_cycle:
+        return 40.0
+
+    ratio = (cycle - min_cycle) / (max_cycle - min_cycle)
+    soh = 95 - (ratio * 55)
+    return max(40, min(100, soh))
 
 
-model, scaler = load_model()
-
-
-# =========================
-# FUNGSI KLASIFIKASI KONDISI
-# =========================
 def classify_condition(soh: float) -> str:
     """Mapping kondisi baterai berdasarkan SoH."""
     if soh >= 80:
@@ -56,23 +53,20 @@ def classify_condition(soh: float) -> str:
 # =========================
 def main():
 
-    st.title("🔋 EV Battery Health Prediction (Model .PKL)")
+    st.title("🔋 EV Battery Health Prediction")
     st.write("""
-        Aplikasi ini menggunakan model produksi **Random Forest (.pkl)**  
-        untuk memprediksi **State of Health (SoH)** baterai EV secara cepat.
+        Prediksi **State of Health (SoH)** baterai EV menggunakan
+        pendekatan matematis berbasis degradasi siklus baterai,
+        **tanpa machine learning**.
     """)
 
     st.markdown("---")
 
-    # =========================
-    # MODE INPUT: MANUAL & FILE
-    # =========================
     mode = st.radio("Pilih metode input:", ["🔧 Input Manual", "📁 Upload CSV"])
 
-    # ---- MODE 1: INPUT MANUAL ----
-    if mode == "🔧 Input Manual":
 
-        st.subheader("Masukkan Data Untuk Prediksi")
+    # ---- INPUT MANUAL ----
+    if mode == "🔧 Input Manual":
 
         col1, col2, col3 = st.columns(3)
 
@@ -82,80 +76,64 @@ def main():
 
         with col2:
             current = st.number_input("Battery Current (A)", value=50.0)
-            power = st.number_input("Power Consumption (kW atau unit dataset)", value=10.0)
+            power = st.number_input("Power Consumption", value=10.0)
 
         with col3:
             cycles = st.number_input("Charge Cycles", min_value=0.0, value=100.0)
 
         st.markdown("---")
 
-        if st.button("🔮 Prediksi SoH (Manual)"):
-            input_df = pd.DataFrame([{
-                "Battery_Temperature": temp,
-                "Battery_Voltage": voltage,
-                "Battery_Current": current,
-                "Power_Consumption": power,
-                "Charge_Cycles": cycles
-            }])
-
-            scaled = scaler.transform(input_df)
-            soh = model.predict(scaled)[0]
-            kondisi = classify_condition(soh)
+        if st.button("🔮 Prediksi SoH"):
+            soh = calculate_soh(cycles)
+            status = classify_condition(soh)
 
             st.success(f"Hasil Prediksi SoH: **{soh:.2f}%**")
 
-            if kondisi == "SEHAT":
-                st.info("⚡ Status: **SEHAT — Baterai dalam kondisi baik.**")
-            elif kondisi == "CUKUP SEHAT":
-                st.warning("🟡 Status: **CUKUP SEHAT — Perlu pemantauan.**")
+            if status == "SEHAT":
+                st.info("⚡ Status: **SEHAT — Baterai dalam kondisi optimal.**")
+            elif status == "CUKUP SEHAT":
+                st.warning("🟡 Status: **CUKUP SEHAT — Waspadai degradasi.**")
             else:
-                st.error("🔴 Status: **BURUK — Perlu perawatan atau penggantian.**")
+                st.error("🔴 Status: **BURUK — Perlu pemeriksaan / penggantian.**")
 
 
-    # ---- MODE 2: UPLOAD CSV ----
+    # ---- CSV UPLOAD ----
     elif mode == "📁 Upload CSV":
 
-        st.subheader("Upload File CSV Untuk Prediksi Banyak Data")
+        st.subheader("Upload File CSV")
         file = st.file_uploader("Unggah file CSV", type=["csv"])
 
         if file:
             df = pd.read_csv(file)
 
-            # Validasi format
-            missing_cols = [c for c in BATTERY_FEATURES if c not in df.columns]
-            if missing_cols:
-                st.error(f"Kolom berikut tidak ditemukan: {missing_cols}")
+            if "Charge_Cycles" not in df.columns:
+                st.error("Kolom wajib 'Charge_Cycles' tidak ditemukan.")
                 return
 
-            # Prediksi
-            scaled = scaler.transform(df[BATTERY_FEATURES])
-            df["Predicted_SoH"] = model.predict(scaled)
+            df["Predicted_SoH"] = df["Charge_Cycles"].apply(calculate_soh)
             df["Condition"] = df["Predicted_SoH"].apply(classify_condition)
 
-            st.success("Prediksi berhasil dilakukan!")
+            st.success("Prediksi berhasil!")
             st.dataframe(df)
 
-            # Export file hasil
-            csv_result = df.to_csv(index=False).encode("utf-8")
+            csv_out = df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Download Hasil Prediksi",
-                data=csv_result,
-                file_name="EV_Battery_Prediction_Result.csv",
-                mime="text/csv",
+                data=csv_out,
+                file_name="EV_Battery_Health_Prediction.csv",
+                mime="text/csv"
             )
 
 
-    # -------------------------------
-    # Informasi Batas Interpretasi
-    # -------------------------------
+    # FOOTER INFO
     st.markdown("""
     ---
     ### 📌 Panduan Interpretasi SoH
     | SoH (%) | Kondisi |
     |---------|---------|
-    | ≥ 80 | Sangat sehat, layak operasi |
-    | 70–79 | Penurunan mulai terasa |
-    | < 70 | Risiko performa buruk, periksa lebih lanjut |
+    | ≥ 80 | 🟢 Sangat Sehat |
+    | 70–79 | 🟡 Mulai Menurun |
+    | < 70 | 🔴 Perlu Pemeriksaan |
     """)
 
 
