@@ -1,128 +1,113 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
 import os
 import joblib
+import pandas as pd
+import streamlit as st
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier
 
 
-# ==========================
-# Load or Train Model
-# ==========================
+# ===========================
+# 🔧 AUTO LOAD / TRAIN MODEL
+# ===========================
 @st.cache_resource
 def load_model():
-
-    model_file = "ev_model.pkl"
-    scaler_file = "ev_scaler.pkl"
+    model_file = "model.pkl"
+    scaler_file = "scaler.pkl"
 
     # If model already exists → load it
     if os.path.exists(model_file) and os.path.exists(scaler_file):
-        return joblib.load(model_file), joblib.load(scaler_file)
+        model = joblib.load(model_file)
+        scaler = joblib.load(scaler_file)
+        return model, scaler
 
-    # Otherwise → train model from dataset
-    dataset = "EV_Predictive_Maintenance_Dataset_15min.csv"
+    # Otherwise train from dataset
+    dataset = None
+    for f in os.listdir():
+        if f.endswith(".csv"):
+            dataset = f
+            break
 
-    if not os.path.exists(dataset):
-        raise FileNotFoundError(f"Dataset '{dataset}' tidak ditemukan!")
+    if dataset is None:
+        st.error("❌ Dataset CSV tidak ditemukan dalam folder!")
+        return None, None
+
+    st.warning(f"📂 Dataset ditemukan: **{dataset}** — Training model... ⏳")
 
     df = pd.read_csv(dataset)
 
-    # Clean duplicates
-    df = df.drop_duplicates().reset_index(drop=True)
+    # Select features & target (sesuaikan dengan dataset kamu!)
+    X = df.drop("Depression", axis=1)
+    y = df["Depression"]
 
-    # Define features & target
-    features = [
-        "Battery_Temperature",
-        "Battery_Voltage",
-        "Battery_Current",
-        "Power_Consumption",
-        "Charge_Cycles"
-    ]
-
-    # Feature Engineering: Custom SoH logic
-    min_cycle = df["Charge_Cycles"].min()
-    max_cycle = df["Charge_Cycles"].max()
-
-    def soh_formula(cycle):
-        cycle = float(cycle)
-        if cycle <= min_cycle: return 100
-        if cycle >= max_cycle: return 40
-        ratio = (cycle - min_cycle) / (max_cycle - min_cycle)
-        return round(95 - ratio * 55, 2)
-
-    df["Health_Score"] = df["Charge_Cycles"].apply(soh_formula)
-
-    # Train Test Split
-    X = df[features]
-    y = df["Health_Score"]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
-
-    # Scale
+    # Scaling
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
+    X_scaled = scaler.fit_transform(X)
 
-    # Model
-    model = RandomForestRegressor(n_estimators=300, random_state=42)
-    model.fit(X_train_scaled, y_train)
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-    # Save to PKL
+    # Train model
+    model = RandomForestClassifier(n_estimators=120, random_state=42)
+    model.fit(X_train, y_train)
+
+    # Save model
     joblib.dump(model, model_file)
     joblib.dump(scaler, scaler_file)
+
+    st.success("🎉 Model berhasil dilatih dan disimpan!")
 
     return model, scaler
 
 
-# ==========================
-# STREAMLIT UI
-# ==========================
-st.set_page_config(page_title="EV Battery Health Predictor", page_icon="🔋")
-
-st.title("🔋 EV Battery Health Prediction App")
-st.write("Masukkan nilai berikut untuk memprediksi kondisi kesehatan baterai (SoH).")
-
 model, scaler = load_model()
 
 
-# ========= User Input =========
-temp = st.number_input("Battery Temperature (°C)", 0.0, 120.0, 35.0)
-volt = st.number_input("Battery Voltage (V)", 0.0, 1000.0, 350.0)
-current = st.number_input("Battery Current (A)", -300.0, 300.0, 50.0)
-power = st.number_input("Power Consumption (kW)", 0.0, 1000.0, 60.0)
-cycles = st.number_input("Charge Cycles", 0.0, 5000.0, 500.0)
 
-features = pd.DataFrame([{
-    "Battery_Temperature": temp,
-    "Battery_Voltage": volt,
-    "Battery_Current": current,
-    "Power_Consumption": power,
-    "Charge_Cycles": cycles
-}])
+# ===========================
+# 🎨 STREAMLIT UI
+# ===========================
+st.title("🧠 Mental Health Depression Prediction App")
+st.write("Masukkan data pengguna untuk memprediksi kemungkinan depresi.")
 
 
-# ========= Predict =========
-if st.button("🔮 Predict Battery Health"):
-    try:
-        scaled = scaler.transform(features)
-        prediction = model.predict(scaled)[0]
-
-        if prediction > 80:
-            status = "🟢 Excellent - Battery Healthy"
-        elif prediction > 70:
-            status = "🟡 Moderate - Monitor usage"
-        else:
-            status = "🔴 Poor - Needs Maintenance"
-
-        st.success(f"🧪 **Predicted SoH: {prediction:.2f}%**")
-        st.write(f"Status: {status}")
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+# If model not loaded
+if model is None:
+    st.stop()
 
 
-st.write("---")
-st.caption("Made by Peter | Machine Learning • Streamlit • Random Forest")
+# ===========================
+# 📝 User Input Form
+# ===========================
+st.subheader("📌 Isi Data Berikut:")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    age = st.number_input("Age", min_value=10, max_value=100, value=20)
+    academic_pressure = st.slider("Academic Pressure", 1, 10, 5)
+    study_hours = st.slider("Study / Work Hours", 1, 12, 6)
+
+with col2:
+    sleep_duration = st.slider("Sleep Duration (hours)", 1, 10, 6)
+    cgpa = st.number_input("CGPA", min_value=0.0, max_value=10.0, value=7.0)
+    financial_stress = st.slider("Financial Stress", 1, 10, 5)
+
+input_data = pd.DataFrame([[age, academic_pressure, study_hours, sleep_duration, cgpa, financial_stress]],
+                          columns=["Age", "AcademicPressure", "StudyHours", "SleepDuration", "CGPA", "FinancialStress"])
+
+
+# ===========================
+# 🔍 Predict Button
+# ===========================
+if st.button("🔮 Predict"):
+    scaled_input = scaler.transform(input_data)
+    prediction = model.predict(scaled_input)[0]
+
+    if prediction == 1:
+        st.error("⚠ Hasil: **Berpotensi Depresi**. Sebaiknya konsultasi lebih lanjut. 💛")
+    else:
+        st.success("😄 Hasil: **Tidak Depresi**. Tetap jaga kesehatan mental!")
+
+
+st.info("💡 Model menggunakan Random Forest dan preprocessing otomatis dari dataset CSV.")
